@@ -142,6 +142,7 @@ extension AppDelegate {
         SCContext.isPaused = false
         SCContext.isResume = false
         SCContext.lastMicPTS = nil
+        SCContext.audioWriteFailed = false
 
         let audioOnly = SCContext.streamType == .systemaudio
         
@@ -636,7 +637,7 @@ extension AppDelegate {
                 if SCContext.startTime == nil { SCContext.startTime = Date.now }
                 guard let samples = SampleBuffer.asPCMBuffer else { return }
                 do { try SCContext.audioFile?.write(from: samples) }
-                catch { print("Audio file writing error: \(error.localizedDescription)") }
+                catch { SCContext.audioWriteFailed = true; print("Audio file writing error: \(error.localizedDescription)") }
             } else {
                 if SCContext.lastPTS == nil { return }
                 if SCContext.awInput.isReadyForMoreMediaData { SCContext.awInput.append(SCContext.offsetAudio(SampleBuffer)) }

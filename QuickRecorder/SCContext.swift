@@ -41,6 +41,7 @@ class SCContext {
     static var filePath2: String!
     static var audioFile: AVAudioFile?
     static var audioFile2: AVAudioFile?
+    static var audioWriteFailed = false
     static var vW: AVAssetWriter!
     static var vwInput, awInput, micInput: AVAssetWriterInput!
     static var startTime: Date?
@@ -352,43 +353,56 @@ class SCContext {
             //DispatchQueue.global().async { try? audioEngine.inputNode.setVoiceProcessingEnabled(false) }
             if ud.bool(forKey: "enableAEC") { try? AECEngine.stopAudioUnit() }
         }
+        let audioCaptureEmpty  = (streamType == .systemaudio && startTime == nil)
+        let audioCaptureFailed = (streamType == .systemaudio && audioWriteFailed)
         if streamType != .systemaudio {
-            let dispatchGroup = DispatchGroup()
-            dispatchGroup.enter()
-            vwInput.markAsFinished()
-            if #available(macOS 13, *) { awInput.markAsFinished() }
-            vW.finishWriting {
-                if vW.status != .completed {
-                    print("Video writing failed with status: \(vW.status), error: \(String(describing: vW.error))")
-                    let err = vW.error?.localizedDescription ?? "Unknow Error"
-                    showNotification(title: "Failed to save file".local, body: "\(err)", id: "quickrecorder.error.\(UUID().uuidString)")
-                } else {
-                    if ud.bool(forKey: "recordMic") && ud.bool(forKey: "recordWinSound") && ud.bool(forKey: "remuxAudio") {
-                        mixAudioTracks(videoURL: filePath.url) { result in
-                            switch result {
-                            case .success(let url):
-                                print("Exported video to \(String(describing: url.path))")
-                                if !ud.bool(forKey: "showPreview") {
-                                    showNotification(title: "Recording Completed".local, body: String(format: "File saved to: %@".local, url.path), id: "quickrecorder.completed.\(UUID().uuidString)")
-                                }
-                                DispatchQueue.main.async {
-                                    if ud.bool(forKey: "trimAfterRecord") {
-                                        AppDelegate.shared.createNewWindow(view: VideoTrimmerView(videoURL: url), title: url.lastPathComponent, only: false)
-                                    } else {
-                                        showPreview(path: url.path)
+            let didCaptureFrame = (startTime != nil)
+            if vW == nil || vW.status != .writing || !didCaptureFrame {
+                // No session was started (short/static recording) or the writer already failed.
+                vW?.cancelWriting()
+                try? fd.removeItem(atPath: filePath)
+                showNotification(title: "Recording Not Saved".local, body: "No video was captured, so nothing was saved. Try recording again.".local, id: "quickrecorder.error.\(UUID().uuidString)")
+            } else {
+                let dispatchGroup = DispatchGroup()
+                dispatchGroup.enter()
+                vwInput.markAsFinished()
+                if #available(macOS 13, *) { awInput.markAsFinished() }
+                vW.finishWriting {
+                    if vW.status != .completed {
+                        print("Video writing failed with status: \(vW.status), error: \(String(describing: vW.error))")
+                        try? fd.removeItem(atPath: filePath)
+                        let err = vW.error?.localizedDescription ?? "Unknow Error"
+                        showNotification(title: "Failed to save file".local, body: "\(err)", id: "quickrecorder.error.\(UUID().uuidString)")
+                    } else {
+                        if ud.bool(forKey: "recordMic") && ud.bool(forKey: "recordWinSound") && ud.bool(forKey: "remuxAudio") {
+                            mixAudioTracks(videoURL: filePath.url) { result in
+                                switch result {
+                                case .success(let url):
+                                    print("Exported video to \(String(describing: url.path))")
+                                    if !ud.bool(forKey: "showPreview") {
+                                        showNotification(title: "Recording Completed".local, body: String(format: "File saved to: %@".local, url.path), id: "quickrecorder.completed.\(UUID().uuidString)")
                                     }
+                                    DispatchQueue.main.async {
+                                        if ud.bool(forKey: "trimAfterRecord") {
+                                            AppDelegate.shared.createNewWindow(view: VideoTrimmerView(videoURL: url), title: url.lastPathComponent, only: false)
+                                        } else {
+                                            showPreview(path: url.path)
+                                        }
+                                    }
+                                case .failure(let error):
+                                    print("Failed to export video: \(error.localizedDescription)")
                                 }
-                            case .failure(let error):
-                                print("Failed to export video: \(error.localizedDescription)")
                             }
                         }
                     }
+                    dispatchGroup.leave()
                 }
-                dispatchGroup.leave()
+                dispatchGroup.wait()
             }
-            dispatchGroup.wait()
         } else {
-            if ud.bool(forKey: "recordMic") { vW.finishWriting {} }
+            if ud.bool(forKey: "recordMic") {
+                if audioCaptureEmpty || audioCaptureFailed { vW?.cancelWriting() } else { vW.finishWriting {} }
+            }
         }
         
         DispatchQueue.main.async {
@@ -404,7 +418,13 @@ class SCContext {
         audioFile = nil // close audio file
         audioFile2 = nil // close audio file2
         if streamType == .systemaudio {
-            if ud.string(forKey: "audioFormat") == AudioFormat.mp3.rawValue && !ud.bool(forKey: "recordMic") {
+            if audioCaptureFailed {
+                try? fd.removeItem(atPath: filePath)
+                showNotification(title: "Failed to save file".local, body: "The recording could not be saved. If you are saving to iCloud, Dropbox or another synced folder, try a local folder such as the Desktop.".local, id: "quickrecorder.error.\(UUID().uuidString)")
+            } else if audioCaptureEmpty {
+                try? fd.removeItem(atPath: filePath)
+                showNotification(title: "Recording Not Saved".local, body: "No audio was captured, so nothing was saved. Try recording again.".local, id: "quickrecorder.error.\(UUID().uuidString)")
+            } else if ud.string(forKey: "audioFormat") == AudioFormat.mp3.rawValue && !ud.bool(forKey: "recordMic") {
                 Task {
                     let outPutUrl = (String(filePath.dropLast(4)) + ".mp3").url
                     do {
@@ -458,11 +478,9 @@ class SCContext {
         updateStatusBar()
         
         if !(ud.bool(forKey: "recordMic") && ud.bool(forKey: "recordWinSound") && ud.bool(forKey: "remuxAudio")) && streamType != .systemaudio {
-            if let vW = vW {
-                if vW.status != .completed {
-                    streamType = nil
-                    return
-                }
+            if vW?.status != .completed {
+                streamType = nil
+                return
             }
             if !ud.bool(forKey: "showPreview") {
                 let title = "Recording Completed".local
