@@ -30,6 +30,7 @@ class SCContext {
     static var isResume = false
     static var isSkipFrame = false
     static var lastPTS: CMTime?
+    static var lastMicPTS: CMTime?
     static var timeOffset = CMTimeMake(value: 0, timescale: 0)
     static var screenArea: NSRect?
     static let audioEngine = AVAudioEngine()
@@ -331,6 +332,7 @@ class SCContext {
         if ud.bool(forKey: "preventSleep") { SleepPreventer.shared.allowSleep() }
         autoStop = 0
         lastPTS = nil
+        lastMicPTS = nil
         recordCam = ""
         recordDevice = ""
         isMagnifierEnabled = false
@@ -687,20 +689,44 @@ class SCContext {
     static func adjustTime(sample: CMSampleBuffer, by offset: CMTime) -> CMSampleBuffer? {
         guard CMSampleBufferGetFormatDescription(sample) != nil else { return nil }
         
-        var timingInfo = [CMSampleTimingInfo](repeating: CMSampleTimingInfo(), count: Int(CMSampleBufferGetNumSamples(sample)))
-        CMSampleBufferGetSampleTimingInfoArray(sample, entryCount: timingInfo.count, arrayToFill: &timingInfo, entriesNeededOut: nil)
-        
+        var count: CMItemCount = 0
+        CMSampleBufferGetSampleTimingInfoArray(sample, entryCount: 0, arrayToFill: nil, entriesNeededOut: &count)
+        var timingInfo = [CMSampleTimingInfo](repeating: CMSampleTimingInfo(), count: count)
+        CMSampleBufferGetSampleTimingInfoArray(sample, entryCount: count, arrayToFill: &timingInfo, entriesNeededOut: nil)
+
         for i in 0..<timingInfo.count {
-            timingInfo[i].decodeTimeStamp = CMTimeSubtract(timingInfo[i].decodeTimeStamp, offset)
-            timingInfo[i].presentationTimeStamp = CMTimeSubtract(timingInfo[i].presentationTimeStamp, offset)
+            if timingInfo[i].decodeTimeStamp.flags.contains(.valid) {
+                timingInfo[i].decodeTimeStamp = CMTimeSubtract(timingInfo[i].decodeTimeStamp, offset)
+            }
+            if timingInfo[i].presentationTimeStamp.flags.contains(.valid) {
+                timingInfo[i].presentationTimeStamp = CMTimeSubtract(timingInfo[i].presentationTimeStamp, offset)
+            }
         }
         
         var outSampleBuffer: CMSampleBuffer?
         CMSampleBufferCreateCopyWithNewTiming(allocator: nil, sampleBuffer: sample, sampleTimingEntryCount: timingInfo.count, sampleTimingArray: &timingInfo, sampleBufferOut: &outSampleBuffer)
-        
+
         return outSampleBuffer
     }
-    
+
+    static func offsetAudio(_ sampleBuffer: CMSampleBuffer) -> CMSampleBuffer {
+        guard timeOffset.value > 0 else { return sampleBuffer }
+        return adjustTime(sample: sampleBuffer, by: timeOffset) ?? sampleBuffer
+    }
+
+    static func appendMic(_ sampleBuffer: CMSampleBuffer) {
+        guard micInput.isReadyForMoreMediaData else { return }
+        let buffer = offsetAudio(sampleBuffer)
+        let pts = CMSampleBufferGetPresentationTimeStamp(buffer)
+        // Drop any backward-PTS buffer that slips through the resume window: mic runs on its
+        // own queue and can append before the resume block refreshes timeOffset, and a
+        // non-monotonic append would fail the whole shared writer. One guard var suffices
+        // because a single mic source is active per recording.
+        if let last = lastMicPTS, CMTimeCompare(pts, last) <= 0 { return }
+        lastMicPTS = pts
+        micInput.append(buffer)
+    }
+
     static func showNotification(title: String, body: String, id: String) {
         let content = UNMutableNotificationContent()
         content.title = title
