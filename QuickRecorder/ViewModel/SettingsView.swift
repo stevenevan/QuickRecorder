@@ -298,7 +298,7 @@ extension UserDefaults {
         }
         
         do {
-            let data = try NSKeyedArchiver.archivedData(withRootObject: NSColor(color), requiringSecureCoding: false)
+            let data = try NSKeyedArchiver.archivedData(withRootObject: NSColor(color), requiringSecureCoding: true)
             set(data, forKey: key)
         } catch {
             print("Error archiving color:", error)

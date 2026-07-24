@@ -25,7 +25,7 @@ extension AppDelegate {
             default: return // if we don't even know what to record I don't think we should even try
         }
         var isDirectory: ObjCBool = false
-        let outputPath = saveDirectory!
+        let outputPath = saveDirectory ?? NSSearchPathForDirectoriesInDomains(.desktopDirectory, .userDomainMask, true).first!
         if fd.fileExists(atPath: outputPath, isDirectory: &isDirectory) {
             if !isDirectory.boolValue {
                 SCContext.streamType = nil
@@ -294,7 +294,11 @@ extension AppDelegate {
             }
             try await SCContext.stream.startCapture()
         } catch {
-            assertionFailure("capture failed".local)
+            print("Screen capture failed: \(error.localizedDescription)")
+            DispatchQueue.main.async {
+                SCContext.stream = nil
+                _ = createAlert(title: "Failed to Record".local, message: error.localizedDescription, button1: "OK").runModal()
+            }
             return
         }
         if !audioOnly { registerGlobalMouseMonitor() }
@@ -312,7 +316,7 @@ extension AppDelegate {
             case AudioFormat.alac.rawValue: fileEnding = "m4a"
             case AudioFormat.flac.rawValue: fileEnding = "flac"; fileType = .caf
             case AudioFormat.opus.rawValue: fileEnding = "ogg"; fileType = .caf
-            default: assertionFailure("loaded unknown audio format: ".local + fileEnding)
+            default: print("Warning: loaded unknown audio format: \(fileEnding)")
         }
         let path = SCContext.getFilePath()
         if recordMic && SCContext.streamType == .systemaudio {
@@ -320,11 +324,26 @@ extension AppDelegate {
             SCContext.filePath1 = "\(path).qma/sys.\(fileEnding)"
             SCContext.filePath2 = "\(path).qma/mic.\(fileEnding)"
             let infoJsonURL = "\(path).qma/info.json".url
-            let jsonString = "{\"format\": \"\(fileEnding)\", \"encoder\": \"\(encorder)\", \"exportMP3\": \(audioFormat.rawValue == AudioFormat.mp3.rawValue), \"sysVol\": 1.0, \"micVol\": 1.0}"
+            let infoDict: [String: Any] = [
+                "format": fileEnding,
+                "encoder": encorder,
+                "exportMP3": audioFormat.rawValue == AudioFormat.mp3.rawValue,
+                "sysVol": 1.0,
+                "micVol": 1.0
+            ]
             try? fd.createDirectory(at: SCContext.filePath.url, withIntermediateDirectories: true, attributes: nil)
-            try? jsonString.write(to: infoJsonURL, atomically: true, encoding: .utf8)
+            if let jsonData = try? JSONSerialization.data(withJSONObject: infoDict, options: [.prettyPrinted]),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                try? jsonString.write(to: infoJsonURL, atomically: true, encoding: .utf8)
+            }
             
-            SCContext.audioFile = try! AVAudioFile(forWriting: SCContext.filePath1.url, settings: SCContext.updateAudioSettings(), commonFormat: .pcmFormatFloat32, interleaved: false)
+            do {
+                SCContext.audioFile = try AVAudioFile(forWriting: SCContext.filePath1.url, settings: SCContext.updateAudioSettings(), commonFormat: .pcmFormatFloat32, interleaved: false)
+            } catch {
+                print("Failed to create audio file: \(error.localizedDescription)")
+                SCContext.showNotification(title: "Failed to Record".local, body: error.localizedDescription, id: "quickrecorder.error.\(UUID().uuidString)")
+                return
+            }
 
             let sampleRate = SCContext.getSampleRate() ?? 48000
             let settings = SCContext.updateAudioSettings(rate: sampleRate)
@@ -333,11 +352,16 @@ extension AppDelegate {
             SCContext.micInput.expectsMediaDataInRealTime = true
             if SCContext.vW.canAdd(SCContext.micInput) { SCContext.vW.add(SCContext.micInput) }
             SCContext.vW.startWriting()
-            //SCContext.audioFile2 = try! AVAudioFile(forWriting: SCContext.filePath2.url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
         } else {
             SCContext.filePath = "\(path).\(fileEnding)"
             SCContext.filePath1 = SCContext.filePath
-            SCContext.audioFile = try! AVAudioFile(forWriting: SCContext.filePath.url, settings: SCContext.updateAudioSettings(), commonFormat: .pcmFormatFloat32, interleaved: false)
+            do {
+                SCContext.audioFile = try AVAudioFile(forWriting: SCContext.filePath.url, settings: SCContext.updateAudioSettings(), commonFormat: .pcmFormatFloat32, interleaved: false)
+            } catch {
+                print("Failed to create audio file: \(error.localizedDescription)")
+                SCContext.showNotification(title: "Failed to Record".local, body: error.localizedDescription, id: "quickrecorder.error.\(UUID().uuidString)")
+                return
+            }
         }
     }
 }
@@ -367,7 +391,7 @@ extension AppDelegate {
         switch fileEnding {
             case VideoFormat.mov.rawValue: fileType = AVFileType.mov
             case VideoFormat.mp4.rawValue: fileType = AVFileType.mp4
-            default: assertionFailure("loaded unknown video format".local)
+            default: print("Warning: loaded unknown video format: \(fileEnding)")
         }
 
         if remuxAudio && recordMic && recordWinSound {
@@ -459,7 +483,11 @@ extension AppDelegate {
                         SCContext.micInput.append(buffer.asSampleBuffer!)
                     }
                 }
-                try! SCContext.audioEngine.start()
+                do {
+                    try SCContext.audioEngine.start()
+                } catch {
+                    print("Failed to start audio engine: \(error.localizedDescription)")
+                }
             }
         } else {
             AudioRecorder.shared.setupAudioCapture()
@@ -607,7 +635,7 @@ extension AppDelegate {
                 if SCContext.startTime == nil { SCContext.startTime = Date.now }
                 guard let samples = SampleBuffer.asPCMBuffer else { return }
                 do { try SCContext.audioFile?.write(from: samples) }
-                catch { assertionFailure("audio file writing issue".local) }
+                catch { print("Audio file writing error: \(error.localizedDescription)") }
             } else {
                 if SCContext.lastPTS == nil { return }
                 if SCContext.awInput.isReadyForMoreMediaData { SCContext.awInput.append(SampleBuffer) }
@@ -617,7 +645,7 @@ extension AppDelegate {
             break
 #endif
         @unknown default:
-            assertionFailure("unknown stream type".local)
+            print("Warning: unknown stream output type")
         }
     }
 

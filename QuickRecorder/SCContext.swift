@@ -70,9 +70,7 @@ class SCContext {
             if let error = error {
                 switch error {
                 case SCStreamError.userDeclined:
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
-                        self.updateAvailableContent() {_ in}
-                    }
+                    requestPermissions()
                 default:
                     print("Error: failed to fetch available content: ".local, error.localizedDescription)
                 }
@@ -180,7 +178,10 @@ class SCContext {
     static func getFilePath(capture: Bool = false) -> String {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "y-MM-dd HH.mm.ss"
-        return ud.string(forKey: "saveDirectory")! + (capture ? "/Capturing at ".local : "/Recording at ".local) + dateFormatter.string(from: Date())
+        let saveDir = ud.string(forKey: "saveDirectory") ?? NSSearchPathForDirectoriesInDomains(.desktopDirectory, .userDomainMask, true).first!
+        let dirURL = URL(fileURLWithPath: saveDir).standardizedFileURL
+        let fileName = (capture ? "Capturing at ".local : "Recording at ".local) + dateFormatter.string(from: Date())
+        return dirURL.appendingPathComponent(fileName).path
     }
     
     static func updateAudioSettings(format: String = ud.string(forKey: "audioFormat") ?? "", rate: Int = 48000) -> [String : Any] {
@@ -201,7 +202,7 @@ class SCContext {
             audioSettings[AVFormatIDKey] = ud.string(forKey: "videoFormat") != VideoFormat.mp4.rawValue ? kAudioFormatOpus : kAudioFormatMPEG4AAC
             audioSettings[AVEncoderBitRateKey] =  bitRate
         default:
-            assertionFailure("unknown audio format while setting audio settings: ".local + (ud.string(forKey: "audioFormat") ?? "[no defaults]".local))
+            print("Warning: unknown audio format while setting audio settings: \(ud.string(forKey: "audioFormat") ?? "[no defaults]")")
         }
         return audioSettings
     }
@@ -479,10 +480,11 @@ class SCContext {
     static func showPreview(path: String, image: NSImage? = nil) {
         if !ud.bool(forKey: "showPreview") { return }
         var previewImage: NSImage?
-        let previewURL = fd.temporaryDirectory.appendingPathComponent("qr-preview.jpg")
+        let previewURL = fd.temporaryDirectory.appendingPathComponent("qr-preview-\(UUID().uuidString).jpg")
         if image == nil { firstFrame?.nsImage?.saveToFile(previewURL, type: .jpeg) }
-        
+
         if let i = image { previewImage = i } else { previewImage = NSImage(contentsOf: previewURL) }
+        try? fd.removeItem(at: previewURL)
         if let previewImage = previewImage, let screen = getScreenWithMouse() {
             let contentView = NSHostingView(rootView: PreviewView(frame: previewImage, filePath: path))
             previewWindow.contentView = contentView
@@ -724,7 +726,7 @@ class SCContext {
         switch fileEnding {
         case VideoFormat.mov.rawValue: fileType = AVFileType.mov
         case VideoFormat.mp4.rawValue: fileType = AVFileType.mp4
-        default: assertionFailure("loaded unknown video format".local)
+        default: print("Warning: loaded unknown video format: \(fileEnding)")
         }
         
         let audioTracks = asset.tracks(withMediaType: .audio)

@@ -18,7 +18,8 @@ class selectScreen: NSScriptCommand {
         SCContext.updateAvailableContent {
             DispatchQueue.main.async {
                 closeAllWindow()
-                if var index = self.evaluatedArguments!["index"] as? Int {
+                guard let args = self.evaluatedArguments else { return }
+                if var index = args["index"] as? Int {
                     guard let screens = SCContext.availableContent?.displays else { return }
                     index -= 1
                     closeAllWindow()
@@ -77,7 +78,8 @@ class selectApps: NSScriptCommand {
         SCContext.updateAvailableContent {
             DispatchQueue.main.async {
                 closeAllWindow()
-                if let name = self.evaluatedArguments!["name"] as? String {
+                guard let args = self.evaluatedArguments else { return }
+                if let name = args["name"] as? String {
                     guard let app = SCContext.availableContent?.applications.first(where: { $0.applicationName == name }) else {
                         createAlert(title: "Error".local, message: "No such application!".local, button1: "OK".local).runModal()
                         return
@@ -128,11 +130,12 @@ class selectWindows: NSScriptCommand {
         SCContext.updateAvailableContent {
             DispatchQueue.main.async {
                 closeAllWindow()
-                if let title = self.evaluatedArguments!["title"] as? String {
+                guard let args = self.evaluatedArguments else { return }
+                if let title = args["title"] as? String {
                     var windows = [SCWindow]()
                     guard let w = SCContext.availableContent?.windows.filter({ $0.title == title }) else { return }
                     windows = w
-                    if let app = self.evaluatedArguments!["app"] as? String {
+                    if let app = args["app"] as? String {
                         guard let w = SCContext.availableContent?.windows.filter({ $0.title == title && $0.owningApplication?.applicationName == app }) else { return }
                         windows = w
                     }
@@ -186,7 +189,8 @@ class recordAudio: NSScriptCommand {
         SCContext.updateAvailableContent {
             DispatchQueue.main.async {
                 let m = UserDefaults.standard.bool(forKey: "recordMic")
-                if let mic = self.evaluatedArguments!["mic"] as? Bool {
+                guard let args = self.evaluatedArguments else { return }
+                if let mic = args["mic"] as? Bool {
                     UserDefaults.standard.set(mic, forKey: "recordMic")
                 }
                 closeAllWindow()
@@ -204,12 +208,13 @@ class setPreferences: NSScriptCommand {
             createAlert(title: "Error".local, message: "Already recording!".local, button1: "OK".local).runModal()
             return nil
         }
-        if let hires = self.evaluatedArguments!["hires"] as? Bool { UserDefaults.standard.set(hires, forKey: "highRes") }
-        if let fps = self.evaluatedArguments!["fps"] as? Int { UserDefaults.standard.set(fps, forKey: "frameRate") }
-        if let cursor = self.evaluatedArguments!["cursor"] as? Bool { UserDefaults.standard.set(cursor, forKey: "showMouse") }
-        if let sound = self.evaluatedArguments!["sound"] as? Bool { UserDefaults.standard.set(sound, forKey: "recordWinSound") }
-        if let microphone = self.evaluatedArguments!["microphone"] as? Bool { UserDefaults.standard.set(microphone, forKey: "recordMic") }
-        if let quality = self.evaluatedArguments!["quality"] as? Int {
+        guard let args = self.evaluatedArguments else { return nil }
+        if let hires = args["hires"] as? Bool { UserDefaults.standard.set(hires, forKey: "highRes") }
+        if let fps = args["fps"] as? Int { UserDefaults.standard.set(max(1, min(240, fps)), forKey: "frameRate") }
+        if let cursor = args["cursor"] as? Bool { UserDefaults.standard.set(cursor, forKey: "showMouse") }
+        if let sound = args["sound"] as? Bool { UserDefaults.standard.set(sound, forKey: "recordWinSound") }
+        if let microphone = args["microphone"] as? Bool { UserDefaults.standard.set(microphone, forKey: "recordMic") }
+        if let quality = args["quality"] as? Int {
             if [1,2,3].contains(quality) {
                 switch quality {
                     case 1: UserDefaults.standard.set(0.3, forKey: "videoQuality")
@@ -218,12 +223,12 @@ class setPreferences: NSScriptCommand {
                 }
             }
         }
-        if let micname = self.evaluatedArguments!["micname"] as? String {
+        if let micname = args["micname"] as? String {
             if SCContext.getMicrophone().map({$0.localizedName}).contains(micname) || micname == "default" {
                 UserDefaults.standard.set(micname, forKey: "micDevice")
             }
         }
-        if let hdr = self.evaluatedArguments!["hdr"] as? Bool {
+        if let hdr = args["hdr"] as? Bool {
             if #available(macOS 15.0, *) {
                 UserDefaults.standard.set(hdr, forKey: "recordHDR")
             }
