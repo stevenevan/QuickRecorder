@@ -642,7 +642,7 @@ extension AppDelegate {
                 catch { print("Audio file writing error: \(error.localizedDescription)") }
             } else {
                 if SCContext.lastPTS == nil { return }
-                if SCContext.awInput.isReadyForMoreMediaData { SCContext.awInput.append(SampleBuffer) }
+                if SCContext.awInput.isReadyForMoreMediaData { SCContext.awInput.append(SCContext.offsetAudio(SampleBuffer)) }
             }
 #if compiler(>=6.0)
         case .microphone:
