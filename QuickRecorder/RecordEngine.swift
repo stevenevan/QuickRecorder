@@ -141,7 +141,8 @@ extension AppDelegate {
         SCContext.timeOffset = CMTimeMake(value: 0, timescale: 0)
         SCContext.isPaused = false
         SCContext.isResume = false
-        
+        SCContext.lastMicPTS = nil
+
         let audioOnly = SCContext.streamType == .systemaudio
         
         let conf: SCStreamConfiguration
@@ -473,19 +474,15 @@ extension AppDelegate {
                     default: level = .mid
                 }
                 try? SCContext.AECEngine.startAudioStream(enableAEC: enableAEC, duckingLevel: level, audioBufferHandler: { pcmBuffer in
-                    if SCContext.isPaused || SCContext.startTime == nil { return }
-                    if SCContext.micInput.isReadyForMoreMediaData {
-                        SCContext.micInput.append(pcmBuffer.asSampleBuffer!)
-                    }
+                    if SCContext.isPaused || SCContext.isResume || SCContext.startTime == nil { return }
+                    SCContext.appendMic(pcmBuffer.asSampleBuffer!)
                 })
             } else {
                 let input = SCContext.audioEngine.inputNode
                 let inputFormat = input.inputFormat(forBus: 0)
                 input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, time in
-                    if SCContext.isPaused || SCContext.startTime == nil { return }
-                    if SCContext.micInput.isReadyForMoreMediaData {
-                        SCContext.micInput.append(buffer.asSampleBuffer!)
-                    }
+                    if SCContext.isPaused || SCContext.isResume || SCContext.startTime == nil { return }
+                    SCContext.appendMic(buffer.asSampleBuffer!)
                 }
                 do {
                     try SCContext.audioEngine.start()
@@ -721,10 +718,8 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        if SCContext.isPaused || SCContext.startTime == nil { return }
-        if SCContext.micInput.isReadyForMoreMediaData {
-            SCContext.micInput.append(sampleBuffer)
-        }
+        if SCContext.isPaused || SCContext.isResume || SCContext.startTime == nil { return }
+        SCContext.appendMic(sampleBuffer)
     }
 }
 

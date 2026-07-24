@@ -30,6 +30,7 @@ class SCContext {
     static var isResume = false
     static var isSkipFrame = false
     static var lastPTS: CMTime?
+    static var lastMicPTS: CMTime?
     static var timeOffset = CMTimeMake(value: 0, timescale: 0)
     static var screenArea: NSRect?
     static let audioEngine = AVAudioEngine()
@@ -331,6 +332,7 @@ class SCContext {
         if ud.bool(forKey: "preventSleep") { SleepPreventer.shared.allowSleep() }
         autoStop = 0
         lastPTS = nil
+        lastMicPTS = nil
         recordCam = ""
         recordDevice = ""
         isMagnifierEnabled = false
@@ -710,6 +712,19 @@ class SCContext {
     static func offsetAudio(_ sampleBuffer: CMSampleBuffer) -> CMSampleBuffer {
         guard timeOffset.value > 0 else { return sampleBuffer }
         return adjustTime(sample: sampleBuffer, by: timeOffset) ?? sampleBuffer
+    }
+
+    static func appendMic(_ sampleBuffer: CMSampleBuffer) {
+        guard micInput.isReadyForMoreMediaData else { return }
+        let buffer = offsetAudio(sampleBuffer)
+        let pts = CMSampleBufferGetPresentationTimeStamp(buffer)
+        // Drop any backward-PTS buffer that slips through the resume window: mic runs on its
+        // own queue and can append before the resume block refreshes timeOffset, and a
+        // non-monotonic append would fail the whole shared writer. One guard var suffices
+        // because a single mic source is active per recording.
+        if let last = lastMicPTS, CMTimeCompare(pts, last) <= 0 { return }
+        lastMicPTS = pts
+        micInput.append(buffer)
     }
 
     static func showNotification(title: String, body: String, id: String) {
