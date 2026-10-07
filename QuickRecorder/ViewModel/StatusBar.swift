@@ -222,6 +222,52 @@ struct StatusBarItem: View {
     }
 }
 
+@available(macOS 27, *)
+private class StatusBarHostingView<Content: View>: NSHostingView<Content> {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+@available(macOS 27, *)
+class StatusBarAction: NSObject {
+    static let shared = StatusBarAction()
+
+    @objc func click(_ button: NSStatusBarButton) {
+        if SCContext.streamType == nil {
+            PopoverState.shared.isShowing = true
+            return
+        }
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Stop Recording".local, action: #selector(stop), keyEquivalent: "")
+        if SCContext.streamType != .idevice {
+            menu.addItem(withTitle: (PopoverState.shared.isPaused ? "Resume" : "Pause").local, action: #selector(pause), keyEquivalent: "")
+        }
+        if SCContext.streamType != .systemaudio && SCContext.streamType != .idevice {
+            menu.addItem(withTitle: "Camera".local, action: #selector(camera), keyEquivalent: "")
+        }
+        if SCContext.streamType == .idevice {
+            menu.addItem(withTitle: (deviceWindow.isVisible ? "Hide Device Window" : "Show Device Window").local, action: #selector(toggleDeviceWindow), keyEquivalent: "")
+        }
+        for item in menu.items { item.target = self }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.isFlipped ? button.bounds.maxY : button.bounds.minY), in: button)
+    }
+
+    @objc func stop() {
+        if SCContext.streamType == .idevice {
+            AVOutputClass.shared.stopRecording()
+        } else {
+            SCContext.stopRecording()
+        }
+    }
+
+    @objc func pause() { SCContext.pauseRecording() }
+
+    @objc func camera() { PopoverState.shared.isShowing = true }
+
+    @objc func toggleDeviceWindow() {
+        if deviceWindow.isVisible { deviceWindow.close() } else { deviceWindow.orderFront(nil) }
+    }
+}
+
 func updateStatusBar() {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
         if SCContext.streamType == nil && !ud.bool(forKey: "showMenubar") {
@@ -230,7 +276,12 @@ func updateStatusBar() {
         }
         guard let button = statusBarItem.button else { return }
         //let width = SCContext.streamType == nil ? 36 : ((SCContext.streamType == .idevice || SCContext.streamType == .systemaudio) ? 138 : 158)
-        let iconView = NSHostingView(rootView: StatusBarItem().padding(.top, isMacOS14 ? -2 : -1))
+        let iconView: NSView
+        if #available(macOS 27, *) {
+            iconView = StatusBarHostingView(rootView: StatusBarItem().padding(.top, isMacOS14 ? -2 : -1))
+        } else {
+            iconView = NSHostingView(rootView: StatusBarItem().padding(.top, isMacOS14 ? -2 : -1))
+        }
         iconView.frame = NSRect(x: 0, y: 1, width: getStatusBarWidth(), height: isMacOS14 ? 22 : 21)
         button.subviews = [iconView]
         button.frame = iconView.frame

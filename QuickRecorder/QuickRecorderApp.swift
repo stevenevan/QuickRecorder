@@ -263,6 +263,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, SCStreamDelegate, SCStreamOu
 
         statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusBarItem.button?.image = NSImage()
+        if #available(macOS 27, *), let button = statusBarItem.button {
+            button.target = StatusBarAction.shared
+            button.action = #selector(StatusBarAction.click(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
 
         mousePointer.title = "Mouse Pointer".local
         mousePointer.level = .screenSaver
